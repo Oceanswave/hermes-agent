@@ -305,6 +305,7 @@ def _guess_category(tags: list) -> str:
 
 
 MIN_CATEGORY_SIZE = 4
+PROTECTED_CATEGORIES = {"smart-home"}
 
 
 def _consolidate_small_categories(skills: list) -> list:
@@ -314,7 +315,10 @@ def _consolidate_small_categories(skills: list) -> list:
             s["categoryLabel"] = "Other"
 
     counts = Counter(s["category"] for s in skills)
-    small_cats = {cat for cat, n in counts.items() if n < MIN_CATEGORY_SIZE}
+    small_cats = {
+        cat for cat, n in counts.items()
+        if n < MIN_CATEGORY_SIZE and cat not in PROTECTED_CATEGORIES
+    }
 
     for s in skills:
         if s["category"] in small_cats:

@@ -181,6 +181,12 @@ hermes skills uninstall <skill-name>
 | [**oss-forensics**](/docs/user-guide/skills/optional/security/security-oss-forensics) | Supply chain investigation, evidence recovery, and forensic analysis for GitHub repositories. Covers deleted commit recovery, force-push detection, IOC extraction, multi-source evidence collection, hypothesis formation/validation, and st... |
 | [**sherlock**](/docs/user-guide/skills/optional/security/security-sherlock) | OSINT username search across 400+ social networks. Hunt down social media accounts by username. |
 
+## smart-home
+
+| Skill | Description |
+|-------|-------------|
+| [**hermes-tescmd-plugin**](/docs/user-guide/skills/optional/smart-home/smart-home-hermes-tescmd-plugin) | Install and operate the native Hermes Tesla Fleet plugin for vehicle state, guarded controls, /tescmd dashboard widgets, and /tescmd-* slash commands. |
+
 ## software-development
 
 | Skill | Description |
