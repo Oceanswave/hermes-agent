@@ -459,6 +459,10 @@ class GatewayConfig:
 
     # User-defined quick commands (slash commands that bypass the agent loop)
     quick_commands: Dict[str, Any] = field(default_factory=dict)
+
+    # Gateway-level Kanban triage routing.  Kept as a plain mapping so the
+    # contract can evolve without schema churn in this already-large config.
+    kanban_triage: Dict[str, Any] = field(default_factory=dict)
     
     # Storage paths
     sessions_dir: Path = field(default_factory=lambda: get_hermes_home() / "sessions")
@@ -571,6 +575,7 @@ class GatewayConfig:
             },
             "reset_triggers": self.reset_triggers,
             "quick_commands": self.quick_commands,
+            "kanban_triage": self.kanban_triage,
             "sessions_dir": str(self.sessions_dir),
             "always_log_local": self.always_log_local,
             "stt_enabled": self.stt_enabled,
@@ -615,6 +620,10 @@ class GatewayConfig:
         if not isinstance(quick_commands, dict):
             quick_commands = {}
 
+        kanban_triage = data.get("kanban_triage", {})
+        if not isinstance(kanban_triage, dict):
+            kanban_triage = {}
+
         stt_enabled = data.get("stt_enabled")
         if stt_enabled is None:
             stt_enabled = data.get("stt", {}).get("enabled") if isinstance(data.get("stt"), dict) else None
@@ -639,6 +648,7 @@ class GatewayConfig:
             reset_by_platform=reset_by_platform,
             reset_triggers=data.get("reset_triggers", ["/new", "/reset"]),
             quick_commands=quick_commands,
+            kanban_triage=kanban_triage,
             sessions_dir=sessions_dir,
             always_log_local=_coerce_bool(data.get("always_log_local"), True),
             stt_enabled=_coerce_bool(stt_enabled, True),
@@ -728,6 +738,12 @@ def load_gateway_config() -> GatewayConfig:
             if isinstance(stt_cfg, dict):
                 gw_data["stt"] = stt_cfg
 
+            gateway_cfg = yaml_cfg.get("gateway")
+            if isinstance(gateway_cfg, dict):
+                kanban_triage_cfg = gateway_cfg.get("kanban_triage")
+                if isinstance(kanban_triage_cfg, dict):
+                    gw_data["kanban_triage"] = kanban_triage_cfg
+
             if "group_sessions_per_user" in yaml_cfg:
                 gw_data["group_sessions_per_user"] = yaml_cfg["group_sessions_per_user"]
 
@@ -779,13 +795,14 @@ def load_gateway_config() -> GatewayConfig:
                 gw_data["platforms"] = platforms_data
             # Iterate built-in platforms plus any registered plugin platforms
             # so plugin authors get the same shared-key bridging (#24836).
+            _pr: Any = None
             try:
                 from hermes_cli.plugins import discover_plugins
                 discover_plugins()  # idempotent
-                from gateway.platform_registry import platform_registry as _pr
+                from gateway.platform_registry import platform_registry as _platform_registry
+                _pr = _platform_registry
             except Exception as e:
                 logger.debug("plugin discovery skipped: %s", e)
-                _pr = None
 
             _shared_loop_targets: list = list(Platform)
             if _pr is not None:

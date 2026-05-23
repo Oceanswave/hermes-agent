@@ -7032,6 +7032,30 @@ class GatewayRunner:
                 return self._telegram_topic_root_lobby_message()
             return None
 
+        if not command:
+            try:
+                from gateway.kanban_triage import route_chat_to_kanban_if_needed
+
+                triage_result = route_chat_to_kanban_if_needed(event, self.config)
+                if triage_result.created:
+                    logger.info(
+                        "Kanban triage routed chat message to board=%s task=%s",
+                        triage_result.board_slug,
+                        triage_result.task_id,
+                    )
+                    return triage_result.ack
+                if triage_result.bypass_rule and triage_result.bypass_rule != "disabled":
+                    logger.debug(
+                        "Kanban triage bypassed message for %s: %s",
+                        _quick_key,
+                        triage_result.bypass_rule,
+                    )
+            except Exception as triage_exc:
+                logger.warning(
+                    "Kanban triage routing failed; falling back to normal chat: %s",
+                    triage_exc,
+                )
+
         # ── Claim this session before any await ───────────────────────
         # Between here and _run_agent registering the real AIAgent, there
         # are numerous await points (hooks, vision enrichment, STT,
