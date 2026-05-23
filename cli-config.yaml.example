@@ -535,6 +535,45 @@ streaming:
   # buffer_threshold: 40      # chars before forcing an edit flush
   # cursor: " ▉"              # cursor shown during streaming
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Gateway Chat-to-Kanban Triage
+# ─────────────────────────────────────────────────────────────────────────────
+# Optional: route selected messaging-gateway chat messages into Kanban triage
+# cards instead of starting an agent turn immediately. Disabled by default;
+# missing config keeps normal chat behavior.
+#
+# gateway:
+#   kanban_triage:
+#     enabled: false
+#     default_mode: normal      # off | normal | triage_first | force_triage
+#     triage_assignee: paul
+#     fallback_board: inbox
+#     min_confidence: 0.70
+#     create_missing_boards: true
+#     board_create_policy: explicit_project_only  # explicit_project_only | confident_project | always | never
+#     acknowledge: true
+#     ack_template: "Queued for triage: board={board_slug} task={task_id}"
+#     # immediate_execution_keywords: ["now:", "execute:", "run:", "do now:"]
+#     # triage_keywords: [queue, track, "make a task", "add to kanban", "put on the board"]
+#     # command_prefixes: ["/"]
+#     # boards:
+#     #   hermes-agent:
+#     #     aliases: [hermes, "hermes agent", agent]
+#     #     default_category: engineering
+#     # categories:
+#     #   engineering:
+#     #     board: hermes-agent
+#     #     assignee: paul
+#     # platforms:
+#     #   telegram:
+#     #     default_mode: triage_first
+#     # users:
+#     #   "telegram:123456789":
+#     #     mode: normal
+#
+# See website/docs/user-guide/messaging/kanban-triage.md for board resolution,
+# metadata, acknowledgement, bypass, and migration details.
+
 # =============================================================================
 # Skills Configuration
 # =============================================================================

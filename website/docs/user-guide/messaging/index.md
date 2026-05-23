@@ -10,6 +10,8 @@ Chat with Hermes from Telegram, Discord, Slack, WhatsApp, Signal, SMS, Email, Ho
 
 For the full voice feature set — including CLI microphone mode, spoken replies in messaging, and Discord voice-channel conversations — see [Voice Mode](/docs/user-guide/features/voice-mode) and [Use Voice Mode with Hermes](/docs/guides/use-voice-mode-with-hermes).
 
+If you want chat messages to become durable work items instead of immediate agent turns, see [Chat-to-Kanban Triage](kanban-triage.md).
+
 ## Platform Comparison
 
 | Platform | Voice | Images | Files | Threads | Reactions | Typing | Streaming |
@@ -446,6 +448,7 @@ Each platform has its own toolset:
 ## Next Steps
 
 - [Telegram Setup](telegram.md)
+- [Chat-to-Kanban Triage](kanban-triage.md)
 - [Discord Setup](discord.md)
 - [Slack Setup](slack.md)
 - [Google Chat Setup](google_chat.md)

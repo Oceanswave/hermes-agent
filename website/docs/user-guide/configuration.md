@@ -73,6 +73,28 @@ Multiple references in a single value work: `url: "${HOST}:${PORT}"`. If a refer
 
 For AI provider setup (OpenRouter, Anthropic, Copilot, custom endpoints, self-hosted LLMs, fallback models, etc.), see [AI Providers](/docs/integrations/providers).
 
+## Gateway Kanban Triage Configuration
+
+Chat-to-Kanban triage is configured under `gateway.kanban_triage` in `config.yaml`. It is disabled by default for backwards compatibility; missing or invalid config is treated as `{ enabled: false }`, so existing gateway conversations continue to run immediately.
+
+```yaml
+gateway:
+  kanban_triage:
+    enabled: false                 # opt in explicitly
+    default_mode: normal           # off | normal | triage_first | force_triage
+    triage_assignee: paul          # profile assigned to new triage cards
+    fallback_board: inbox          # board used when routing is uncertain
+    min_confidence: 0.70
+    create_missing_boards: true
+    board_create_policy: explicit_project_only  # explicit_project_only | confident_project | always | never
+    acknowledge: true
+    ack_template: "Queued for triage: board={board_slug} task={task_id}"
+```
+
+Use `normal` mode when you only want explicit phrases such as "add to Kanban" or "make a task" to create cards. Use `triage_first` when a chat/channel is mainly an intake lane and task-like messages should be queued before an agent turn. Slash commands, quick commands, normal questions, and immediate-execution prefixes such as `now:` bypass triage.
+
+Full setup, board resolution, metadata, acknowledgement, bypass, and migration details are in [Chat-to-Kanban Triage](/docs/user-guide/messaging/kanban-triage).
+
 ### Provider Timeouts
 
 You can set `providers.<id>.request_timeout_seconds` for a provider-wide request timeout, plus `providers.<id>.models.<model>.timeout_seconds` for a model-specific override. Applies to the primary turn client on every transport (OpenAI-wire, native Anthropic, Anthropic-compatible), the fallback chain, rebuilds after credential rotation, and (for OpenAI-wire) the per-request timeout kwarg — so the configured value wins over the legacy `HERMES_API_TIMEOUT` env var.

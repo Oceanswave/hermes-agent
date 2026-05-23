@@ -31,6 +31,10 @@ For the full design rationale, comparative analysis against Cline Kanban / Paper
 
 ## Kanban vs. `delegate_task`
 
+:::tip Chat intake
+If users submit work through Telegram, Discord, Slack, or another messaging gateway, [Chat-to-Kanban Triage](/docs/user-guide/messaging/kanban-triage) can convert selected chat messages into `triage` cards automatically. It is opt-in and keeps normal conversation or immediate execution available through bypass rules.
+:::
+
 They look similar; they are not the same primitive.
 
 | | `delegate_task` | Kanban |
