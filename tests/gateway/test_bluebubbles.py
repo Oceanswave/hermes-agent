@@ -8,7 +8,8 @@ import httpx
 import pytest
 
 from gateway.config import Platform, PlatformConfig
-from gateway.platforms.base import BasePlatformAdapter, MessageEvent, SendResult
+from gateway.platforms.base import BasePlatformAdapter, SendResult
+from gateway.platforms.event import MessageEvent
 
 
 @pytest.fixture(autouse=True)
@@ -1367,13 +1368,13 @@ class TestBlueBubblesAttachmentDownload:
 
         cached_path = None
 
-        def mock_cache_image(data, ext):
+        async def mock_cache_image(data, ext):
             nonlocal cached_path
             cached_path = f"/tmp/test_image{ext}"
             return cached_path
 
         monkeypatch.setattr(
-            "gateway.platforms.bluebubbles.cache_image_from_bytes",
+            "gateway.platforms.bluebubbles.cache_image_from_bytes_async",
             mock_cache_image,
         )
 
@@ -2165,3 +2166,28 @@ class TestBlueBubblesTimeoutErrorNormalization:
         assert not result.success
         assert "500 Internal Server Error" in (result.error or "")
 
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_number,outbound_only", [(98, True), (13, False)])
+async def test_listener_failure_preserves_gateway_hook(monkeypatch, error_number, outbound_only):
+    import errno
+    from aiohttp import web
+
+    adapter = _make_adapter(monkeypatch)
+    adapter._api_get = AsyncMock(return_value={"data": {}})
+    register = AsyncMock(return_value=True)
+    unregister = AsyncMock(return_value=False)
+    monkeypatch.setattr(adapter, "_register_webhook", register)
+    monkeypatch.setattr(adapter, "_unregister_webhook", unregister)
+    error = errno.EADDRINUSE if outbound_only else errno.EACCES
+    monkeypatch.setattr(web.TCPSite, "start", AsyncMock(side_effect=OSError(error, "bind failed")))
+
+    assert await adapter.connect() is outbound_only
+    register.assert_not_awaited()
+    assert adapter._runner is None
+    assert (adapter.client is not None) is outbound_only
+    if outbound_only:
+        await adapter.disconnect()
+        unregister.assert_not_awaited()
+    assert adapter.client is None
