@@ -2169,8 +2169,8 @@ class TestBlueBubblesTimeoutErrorNormalization:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("error_number,outbound_only", [(98, True), (13, False)])
-async def test_listener_failure_preserves_gateway_hook(monkeypatch, error_number, outbound_only):
+@pytest.mark.parametrize("outbound_only", [True, False])
+async def test_listener_failure_preserves_gateway_hook(monkeypatch, outbound_only):
     import errno
     from aiohttp import web
 
