@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+from datetime import datetime
 from urllib.parse import quote
 
 _REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
@@ -51,22 +52,26 @@ def collect_acceptance(contract: str, published_pr: str | None) -> dict:
         repo, number = match[1], int(match[2])
         receipt["pr_url"] = url
         owner, name = repo.split("/")
-        query = '''{repository(owner:%s,name:%s){pullRequest(number:%d){headRefOid baseRefName state
+        query = '''{repository(owner:%s,name:%s){pullRequest(number:%d){headRefOid baseRefName state mergedAt mergeCommit{oid}
             baseRef{branchProtectionRule{requiredStatusChecks{context app{databaseId}}}}}}}''' % (
                 json.dumps(owner), json.dumps(name), number)
         pr = _api("graphql", query=query)["data"]["repository"]["pullRequest"]
         sha, branch = pr["headRefOid"], pr["baseRefName"]
         receipt["head_sha"] = sha
+        receipt["pr_state"] = pr["state"]
         if not re.fullmatch(r"[0-9a-f]{40}", sha) or pr["state"] not in {"OPEN", "MERGED"}:
             raise ValueError("PR is closed or current head is unavailable")
         protection = (pr.get("baseRef") or {}).get("branchProtectionRule") or {}
         required = {(r["context"], (r.get("app") or {}).get("databaseId")) for r in protection.get("requiredStatusChecks", [])}
+        sources = {requirement: {None} for requirement in required}
         rules = _api(f"repos/{repo}/rules/branches/{quote(branch, safe='')}?per_page=100", paginate=True)
         for page in rules:
             for rule in page:
                 if rule["type"] == "required_status_checks":
-                    required.update((r["context"], r.get("integration_id"))
-                                    for r in rule["parameters"]["required_status_checks"])
+                    for check in rule["parameters"]["required_status_checks"]:
+                        requirement = (check["context"], check.get("integration_id"))
+                        required.add(requirement)
+                        sources.setdefault(requirement, set()).add(rule["ruleset_id"])
         receipt["required"] = [{"context": c, "app_id": a} for c, a in sorted(required, key=str)]
         if not required:
             receipt["detail"] = "No repository-required checks are configured; explicitly use a local-only contract for non-CI tasks."
@@ -76,12 +81,26 @@ def collect_acceptance(contract: str, published_pr: str | None) -> dict:
         if len({r["id"] for r in runs}) != pages[0]["total_count"]:
             raise ValueError("Incomplete check-run pagination")
         statuses = [{**s, "sha": sha} for page in _api(f"repos/{repo}/commits/{sha}/statuses?per_page=100", paginate=True) for s in page]
+        merged_proof = None
         outcomes = []
         for context, app_id in sorted(required, key=str):
             matching = [r for r in runs if r["name"] == context and
                         (app_id in (None, -1) or r["app"]["id"] == app_id)]
-            # A legacy status can satisfy an unpinned context, but never a check pinned to an app.
-            legacy = [s for s in statuses if s["context"] == context] if app_id in (None, -1) else []
+            legacy = [s for s in statuses if s["context"] == context]
+            if legacy:
+                legacy = [max(legacy, key=lambda s: s["id"])]
+            # Legacy statuses omit the integration ID. For an already merged PR,
+            # GitHub's enforcing rule evaluation can attest to that provenance.
+            if app_id not in (None, -1):
+                proof_sources = sources[(context, app_id)]
+                eligible = (not matching and legacy and legacy[0]["state"] == "success"
+                            and pr["state"] == "MERGED" and None not in proof_sources)
+                if eligible and merged_proof is None:
+                    merged_proof = _merged_status_proof(repo, branch, pr, sources)
+                if eligible and proof_sources <= set((merged_proof or {}).get("rulesets", [])):
+                    receipt["merged_rule_evidence"] = merged_proof
+                else:
+                    legacy = []
             selected = matching + ([max(legacy, key=lambda s: s["id"])] if legacy else [])
             if not selected:
                 outcomes.append("missing")
@@ -97,7 +116,10 @@ def collect_acceptance(contract: str, published_pr: str | None) -> dict:
                     "classification": classification, "conclusion": outcome})
         # Re-read after all pages: old-head successes are never transferable.
         current = _api(f"repos/{repo}/pulls/{number}")
-        if current["head"]["sha"] != sha or current["base"]["ref"] != branch or (current["state"] == "closed" and not current.get("merged")):
+        if (current["head"]["sha"] != sha or current["base"]["ref"] != branch
+                or (current["state"] == "closed" and not current.get("merged"))
+                or (merged_proof and (not current.get("merged")
+                    or current.get("merge_commit_sha") != merged_proof["merge_sha"]))):
             receipt.update(classification="stale", detail="PR head/base changed while collecting evidence; retry.")
             return receipt
         receipt["classification"] = next((x for x in outcomes if x != "success"), "missing" if not outcomes else "success")
@@ -107,6 +129,41 @@ def collect_acceptance(contract: str, published_pr: str | None) -> dict:
         # Never persist gh stderr (credentials/host details); the failed phase is actionable.
         receipt.update(classification="infra", detail="GitHub acceptance evidence unavailable or incomplete; check gh authentication/API access and retry.")
         return receipt
+
+
+def _merged_status_proof(repo: str, branch: str, pr: dict, sources: dict) -> dict:
+    """Accept only non-bypassed merge evaluations of unchanged active rulesets."""
+    merge_sha = (pr.get("mergeCommit") or {}).get("oid")
+    merged_at = pr.get("mergedAt")
+    if not merge_sha or not merged_at:
+        return {}
+    ref = f"refs/heads/{branch}"
+    pages = _api(f"repos/{repo}/rulesets/rule-suites?ref={quote(ref, safe='')}"
+                 "&time_period=month&rule_suite_result=pass&per_page=100", paginate=True)
+    for page in pages:
+        for candidate in page:
+            if candidate.get("after_sha") != merge_sha or candidate.get("ref") != ref:
+                continue
+            suite = _api(f"repos/{repo}/rulesets/rule-suites/{candidate['id']}")
+            if (suite.get("result") != "pass" or suite.get("after_sha") != merge_sha
+                    or suite.get("ref") != ref or not suite.get("pushed_at")
+                    or abs((datetime.fromisoformat(suite["pushed_at"])
+                            - datetime.fromisoformat(merged_at)).total_seconds()) > 5):
+                continue
+            active = [r for r in suite.get("rule_evaluations", []) if r["enforcement"] == "active"]
+            if not active or any(r["result"] != "pass" for r in active):
+                continue
+            passed = {r["rule_source"]["id"] for r in active
+                      if r["rule_type"] == "required_status_checks" and r["rule_source"]["type"] == "ruleset"}
+            verified = []
+            for ruleset_id in sorted(passed & {s for values in sources.values() for s in values if s is not None}):
+                policy = _api(f"repos/{repo}/rulesets/{ruleset_id}")
+                if (policy["enforcement"] == "active"
+                        and datetime.fromisoformat(policy["updated_at"]) <= datetime.fromisoformat(merged_at)):
+                    verified.append(ruleset_id)
+            return {"suite_id": suite["id"], "merge_sha": merge_sha,
+                    "merged_at": merged_at, "ref": ref, "rulesets": verified}
+    return {}
 
 
 def _classify(check: dict, sha: str, outcome: str | None, is_run: bool) -> str:

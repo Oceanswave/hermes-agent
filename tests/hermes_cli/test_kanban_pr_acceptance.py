@@ -21,18 +21,30 @@ def github(tmp_path, monkeypatch):
             sha = state["head"]
             if self.path == "/graphql":
                 value = {"data": {"repository": {"pullRequest": {
-                    "headRefOid": sha, "baseRefName": "main", "state": "OPEN",
-                    "baseRef": {"branchProtectionRule": {"requiredStatusChecks": [
+                    "headRefOid": sha, "baseRefName": "main", "state": state.get("pr_state", "OPEN"),
+                    "mergeCommit": {"oid": "c" * 40}, "mergedAt": "2026-09-11T20:55:18Z",
+                    "baseRef": {"branchProtectionRule": {"requiredStatusChecks": [] if state.get("legacy") else [
                         {"context": "required", "app": {"databaseId": 1}}]}}}}}}
             elif "/rules/branches/" in self.path:
-                value = [[]]
+                value = [[{"type": "required_status_checks", "ruleset_id": 7, "parameters": {
+                    "required_status_checks": [{"context": "required", "integration_id": 1}]}}]] if state.get("legacy") else [[]]
+            elif "/rulesets/rule-suites/" in self.path:
+                value = {"id": 8, "after_sha": "c" * 40, "ref": "refs/heads/main",
+                         "pushed_at": "2026-09-11T14:55:18-06:00", "result": state.get("suite_result", "pass"),
+                         "rule_evaluations": [{"rule_source": {"type": "ruleset", "id": state.get("source_id", 7)},
+                             "enforcement": state.get("enforcement", "active"), "result": state.get("rule_result", "pass"),
+                             "rule_type": "required_status_checks"}]}
+            elif "/rulesets/rule-suites?" in self.path:
+                value = [[{"id": 8, "after_sha": state.get("suite_sha", "c" * 40), "ref": "refs/heads/main"}]]
+            elif "/rulesets/7" in self.path:
+                value = {"id": 7, "enforcement": "active", "updated_at": state.get("policy_updated", "2026-09-01T00:00:00Z")}
             elif "/check-runs" in self.path:
                 run = {"id": 42, "name": "required", "head_sha": sha,
                        "app": {"id": 1}, "status": "in_progress" if state["conclusion"] == "pending" else "completed", "conclusion": state["conclusion"],
                        "html_url": "https://github.com/acme/repo/actions/runs/42"}
                 if state.get("stale"):
                     run["head_sha"] = "b" * 40
-                runs = [] if state.get("missing") else [run]
+                runs = [] if state.get("missing") or state.get("legacy") else [run]
                 value = [{"total_count": 100 + len(runs), "check_runs": [
                     {**run, "id": 1000 + i, "name": "optional", "conclusion": "skipped"}
                     for i in range(100)]}, {"total_count": 100 + len(runs), "check_runs": runs}]
@@ -41,9 +53,12 @@ def github(tmp_path, monkeypatch):
                 if state.get("head_change"):
                     state["head"] = "b" * 40
             elif "/statuses" in self.path:
-                value = [[]]
+                value = [[{"id": 99, "context": "required", "state": state["conclusion"], "creator": None,
+                           "target_url": "https://example.com/deployment"}]] if state.get("legacy") else [[]]
             elif "/pulls/" in self.path:
-                value = {"head": {"sha": sha}, "base": {"ref": "main"}, "state": "open"}
+                merged = state.get("pr_state") == "MERGED"
+                value = {"head": {"sha": sha}, "base": {"ref": "main"}, "state": "closed" if merged else "open",
+                         "merged": merged, "merge_commit_sha": state.get("reread_merge_sha", "c" * 40)}
             else:
                 self.send_error(404)
                 return
@@ -129,3 +144,37 @@ def test_acceptance_receipts_and_terminal_write_share_run_ownership(github):
             assert kb.get_task(conn, tid).status != "done"
             assert conn.execute("SELECT count(*) FROM task_events WHERE task_id=? AND kind='pr_acceptance'", (tid,)).fetchone()[0] == 0
             github.pop("race")
+
+
+@pytest.mark.linux_only
+def test_merged_legacy_status_requires_unchanged_enforcing_rule_proof(github):
+    cases = [
+        ({}, True),
+        ({"pr_state": "OPEN"}, False),
+        ({"suite_result": "bypass"}, False),
+        ({"suite_result": "fail"}, False),
+        ({"suite_sha": "d" * 40}, False),
+        ({"source_id": 9}, False),
+        ({"enforcement": "evaluate"}, False),
+        ({"rule_result": "fail"}, False),
+        ({"policy_updated": "2026-09-12T00:00:00Z"}, False),
+        ({"conclusion": "failure"}, False),
+        ({"conclusion": "pending"}, False),
+        ({"reread_merge_sha": "d" * 40}, False),
+    ]
+    with connect() as conn:
+        for overrides, expected in cases:
+            github.update(legacy=True, pr_state="MERGED", conclusion="success", suite_result="pass",
+                          suite_sha="c" * 40, source_id=7, enforcement="active", rule_result="pass",
+                          policy_updated="2026-09-01T00:00:00Z", reread_merge_sha="c" * 40)
+            github.update(overrides)
+            tid = kb.create_task(conn, title="Publish", completion_contract="acme/repo")
+            assert kb.complete_task(conn, tid, metadata={"published_pr": "https://github.com/acme/repo/pull/7"}) is expected, overrides
+            assert (kb.get_task(conn, tid).status == "done") is expected
+            receipt = json.loads(conn.execute(
+                "SELECT payload FROM task_events WHERE task_id=? AND kind='pr_acceptance'", (tid,)
+            ).fetchone()[0])
+            if expected:
+                assert receipt["checks"][0]["id"] == 99
+                assert receipt["merged_rule_evidence"]["merge_sha"] == "c" * 40
+                assert receipt["merged_rule_evidence"]["rulesets"] == [7]

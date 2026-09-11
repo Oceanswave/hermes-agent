@@ -66,6 +66,15 @@ acceptance, unreadable policy or GitHub API failures. A repository without requi
 checks needs a local-only contract. `gh` must be authenticated with read access to
 the repository's checks and rules; no remote writes are performed by this gate.
 
+For an already merged PR, an app-bound legacy status can also be verified by
+GitHub's rule-suite audit. The status must be successful on the exact PR head,
+and the audit must match the merge commit, base ref and merge time. Each relevant
+ruleset must have passed in active enforcement without a bypass and must not have
+changed since the merge. The receipt records the rule-suite ID and merge SHA.
+Open PRs still require direct app-bound check-run evidence. This fallback requires
+read access to rule suites (repository Administration permission); missing audit
+records or permissions remain a verification blocker.
+
 Rejection retains the active card and workspace. Durable `pr_acceptance` events
 store PR URL, SHA, required contexts, check IDs/URLs, classifications and recovery
 instructions; `last_failure_error` surfaces the next step. Fix failures, rerun
